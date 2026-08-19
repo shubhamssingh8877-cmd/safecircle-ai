@@ -318,39 +318,39 @@ export const SettingsPage: React.FC = () => {
                   Enable Permissions
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Section 4: Google Gemini AI Key Config */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-brand-500" />
+                <CardTitle>Google Gemini AI Route Intelligence</CardTitle>
+              </div>
+              <Badge variant={aiAssessment?.isAiAvailable ? 'brand' : 'neutral'} size="sm">
+                {aiAssessment?.isAiAvailable ? 'API Connected' : 'Fallback Engine'}
+              </Badge>
             </div>
+            <CardDescription>
+              Configure your custom Gemini API Key for dynamic route safety scoring and explainable corridor analysis.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Input
+              label="Gemini API Key"
+              type="password"
+              placeholder="AIzaSy..."
+              value={apiKeyInput}
+              onChange={e => setApiKeyInput(e.target.value)}
+              helperText="Key is securely stored in client-side localStorage and only used for direct generative calls."
+              icon={<Key className="w-4 h-4 text-surface-400" />}
+            />
           </CardContent>
         </Card>
       </div>
-
-      {/* Section 4: Google Gemini AI Key Config */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-brand-500" />
-              <CardTitle>Google Gemini AI Route Intelligence</CardTitle>
-            </div>
-            <Badge variant={aiAssessment?.isAiAvailable ? 'brand' : 'neutral'} size="sm">
-              {aiAssessment?.isAiAvailable ? 'API Connected' : 'Fallback Engine'}
-            </Badge>
-          </div>
-          <CardDescription>
-            Configure your custom Gemini API Key for dynamic route safety scoring and explainable corridor analysis.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Input
-            label="Gemini API Key"
-            type="password"
-            placeholder="AIzaSy..."
-            value={apiKeyInput}
-            onChange={e => setApiKeyInput(e.target.value)}
-            helperText="Key is securely stored in client-side localStorage and only used for direct generative calls."
-            icon={<Key className="w-4 h-4 text-surface-400" />}
-          />
-        </CardContent>
-      </Card>
     </form>
   );
 };
