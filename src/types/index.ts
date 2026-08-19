@@ -1,78 +1,50 @@
-export type TransportMode = 'walking' | 'rideshare' | 'transit' | 'driving' | 'cycling';
-export type JourneyStatus = 'active' | 'arrived' | 'paused' | 'escalated' | 'canceled';
+export type TransportMode = 'walking' | 'cycling' | 'driving' | 'transit';
 export type RiskLevel = 'low' | 'moderate' | 'elevated' | 'high';
-export type DeviationSensitivity = 'strict' | 'balanced' | 'relaxed';
-export type DeviationState = 'on_route' | 'caution' | 'deviated';
+export type DeviationState = 'on_route' | 'approaching_deviation' | 'deviated';
 
-export interface Waypoint {
-  id: string;
-  name: string;
-  timestamp: string;
-  passed: boolean;
-  latitude?: number;
-  longitude?: number;
+export interface LocationCoordinate {
+  lat: number;
+  lng: number;
 }
 
-export interface CheckIn {
+export interface CheckInRecord {
   id: string;
   time: string;
-  status: 'confirmed' | 'missed' | 'snoozed';
+  status: 'confirmed' | 'missed' | 'snoozed' | 'pending' | 'overdue';
   notes?: string;
+  batteryLevel?: number;
   locationName?: string;
+  coordinates?: LocationCoordinate;
 }
-
-export type CheckInStatusState = 'on_schedule' | 'overdue' | 'escalating';
 
 export interface Journey {
   id: string;
+  status: 'idle' | 'active' | 'completed' | 'canceled' | 'sos';
   origin: string;
   destination: string;
-  originCoordinates?: {
-    lat: number;
-    lng: number;
-  };
-  destinationCoordinates?: {
-    lat: number;
-    lng: number;
-  };
+  originCoordinates?: LocationCoordinate;
+  destinationCoordinates?: LocationCoordinate;
+  routeCoordinates?: [number, number][]; // Array of [lat, lng] polyline points
   mode: TransportMode;
   startTime: string;
   estimatedArrival: string;
-  status: JourneyStatus;
-  safetyScore: number; // 0-100
-  riskLevel: RiskLevel;
+  currentCheckinIntervalMinutes: number;
+  nextCheckinDueTime: string;
+  secondsUntilCheckin: number;
+  isCheckinOverdue?: boolean;
+  overdueGraceSecondsLeft?: number;
+  lastCheckinStatus: 'confirmed' | 'missed' | 'snoozed' | 'pending' | 'overdue';
+  checkinHistory: CheckInRecord[];
+  safetyScore: number;
+  routeDeviationSensitivity: 'relaxed' | 'balanced' | 'strict';
   deviationDetected: boolean;
-  deviationState?: DeviationState;
-  distanceFromRouteMeters?: number;
-  deviationThresholdMeters?: number;
-  nearestRoutePoint?: {
-    lat: number;
-    lng: number;
-  };
-  lastDeviationCheckedAt?: string;
-  isGpsAccuracyLow?: boolean;
-  gpsAccuracyMeters?: number;
+  deviationDistanceMeters: number;
+  deviationState: DeviationState;
   isSimulatedDeviation?: boolean;
-  deviationDetails?: {
-    distanceMeters: number;
-    minutesOffTrack: number;
-    lastKnownAddress: string;
-  };
-  checkInIntervalMinutes: number;
-  nextCheckInInSeconds: number;
-  checkInStatusState?: CheckInStatusState;
-  overdueGraceSecondsRemaining?: number;
-  missedCheckInCount?: number;
-  waypoints: Waypoint[];
-  recentCheckIns: CheckIn[];
-  assignedContacts: string[]; // Contact IDs
-  emergencyTierTriggered?: number;
-  
-  // Real OSRM Routing metadata
-  routeCoordinates?: [number, number][]; // [lat, lng] array for Leaflet Polyline
-  distanceMeters?: number;
-  durationSeconds?: number;
-  routeProfile?: string;
+  shareWithCircle: boolean;
+  notes?: string;
+  totalDistanceMeters?: number;
+  estimatedDurationSeconds?: number;
   profileUsed?: string;
   completedArrivalTime?: string;
 }
@@ -84,7 +56,8 @@ export interface Contact {
   phoneNumber: string;
   email: string;
   isPrimaryGuardian: boolean;
-  status: 'active' | 'pending' | 'invited';
+  status: 'active' | 'invited' | 'offline';
+  avatarUrl?: string;
   escalationTier: 1 | 2 | 3;
   notifyOnDeviation: boolean;
   notifyOnCheckinMissed: boolean;
@@ -95,55 +68,71 @@ export interface Contact {
 export interface SafetyReport {
   id: string;
   title: string;
-  category: 'lighting' | 'suspicious' | 'infrastructure' | 'transit' | 'harassment';
+  category: 'lighting' | 'suspicious' | 'harassment' | 'infrastructure' | 'transit' | 'wildlife';
   severity: 'advisory' | 'caution' | 'warning';
+  timestamp: string;
   location: string;
   coordinates: {
     lat: number;
     lng: number;
   };
-  timestamp: string;
-  timeAgo: string;
+  description: string;
   upvotes: number;
   verified: boolean;
   verifiedBy: string;
-  description: string;
+  timeAgo: string;
 }
 
 export interface SafeHaven {
   id: string;
   name: string;
-  type: 'police' | 'hospital' | 'pharmacy' | 'transit_hub' | 'verified_business';
+  type: 'police' | 'hospital' | 'pharmacy_247' | 'fire_station' | 'transit_hub';
   address: string;
+  distanceKm: number;
+  isOpen24Hours: boolean;
+  phoneNumber: string;
   coordinates: {
     lat: number;
     lng: number;
   };
-  distanceKm: number;
-  isOpen24Hours: boolean;
-  phoneNumber: string;
-  verificationBadge: string;
 }
 
 export interface RiskZone {
   id: string;
   name: string;
-  overallScore: number; // 0-100, lower is safer
-  lightingQuality: 'poor' | 'moderate' | 'good';
-  pedestrianDensity: 'low' | 'moderate' | 'high';
+  neighborhood: string;
+  riskScore: number; // 0-100 (higher = safer)
+  riskLevel: RiskLevel;
+  lightingQuality: 'poor' | 'fair' | 'good' | 'excellent';
+  crowdDensity: 'isolated' | 'sparse' | 'moderate' | 'busy';
   activeIncidentsCount: number;
+  lastUpdated: string;
+  keyConcerns: string[];
+}
+
+export interface SafetyAlert {
+  id: string;
+  type: 'deviation' | 'missed_checkin' | 'battery_low' | 'manual_sos' | 'high_risk_zone';
+  severity: 'critical' | 'warning' | 'info';
+  timestamp: string;
+  title: string;
   description: string;
-  recentAlert?: string;
+  resolved: boolean;
+  actionRequired?: string;
 }
 
 export interface UserPreferences {
-  routeDeviationSensitivity: DeviationSensitivity;
-  stealthTriggerEnabled: boolean;
-  stealthGesture: 'power_button_4x' | 'volume_down_triple' | 'shake_device';
+  defaultCheckinIntervalMinutes: number;
+  routeDeviationSensitivity: 'relaxed' | 'balanced' | 'strict';
+  stealthSosEnabled: boolean;
+  stealthTriggerMethod: 'power_quad_press' | 'shake_gesture' | 'volume_sequence';
+  autoShareBatteryLevel: boolean;
   autoEscalateAfterMissedCount: number;
-  lowBatteryThresholdPercent: number;
-  liveAudioBeaconVolume: number;
-  shareLocationWithCircleOnStart: boolean;
+  audioRecordingOnSos: boolean;
+  nightModeAutoStart: boolean;
+  theme: 'dark' | 'light' | 'system';
+  stealthTriggerEnabled?: boolean;
+  stealthGesture?: string;
 }
 
 export interface UserProfile {
@@ -153,19 +142,8 @@ export interface UserProfile {
   phone: string;
   bloodType: string;
   medicalNotes: string;
-  emergencyContactId?: string;
   totalSafeJourneys: number;
   circleHealthScore: number;
-}
-
-export interface SafetyAlert {
-  id: string;
-  timestamp: string;
-  type: 'deviation' | 'checkin_missed' | 'zone_warning' | 'sos_triggered' | 'battery_critical';
-  title: string;
-  message: string;
-  resolved: boolean;
-  actionRequired?: string;
 }
 
 export interface SafetyRiskFactor {
@@ -181,13 +159,13 @@ export interface AiRouteInsight {
 }
 
 export interface SafetyAssessment {
-  riskScore: number; // 0-100 (higher = greater caution)
-  riskLevel: RiskLevel;
+  riskScore: number; // 0–100 (higher score = more caution/risk indicated)
+  riskLevel: 'low' | 'moderate' | 'elevated' | 'high';
   summary: string;
   factors: SafetyRiskFactor[];
   recommendations: string[];
-  suggestedCheckInMinutes: number;
-  confidence: number;
+  suggestedCheckInMinutes: number; // 1–60
+  confidence: number; // 0.0–1.0
   analyzedAt: string;
   isAiAvailable: boolean;
   isDemoTelemetry?: boolean;
@@ -196,13 +174,13 @@ export interface SafetyAssessment {
   routeRecommendation?: string;
 }
 
-export interface EmergencyEscalationStep {
+export interface EmergencyEscalationEntry {
   tier: 1 | 2 | 3;
   title: string;
   recipientName: string;
   recipientPhone?: string;
   action: string;
-  status: 'pending' | 'browser_delivered' | 'call_ready' | 'simulated' | 'unconfigured';
+  status: 'browser_delivered' | 'call_ready' | 'simulated' | 'unconfigured';
   timestamp: string;
   details: string;
 }
@@ -211,11 +189,11 @@ export interface EmergencySosEvent {
   id: string;
   createdAt: string;
   resolvedAt?: string;
-  status: 'active' | 'resolved' | 'cancelled';
+  status: 'active' | 'resolved';
   type: 'manual_sos' | 'missed_checkin_escalation' | 'deviation_escalation';
-  latitude: number;
-  longitude: number;
-  accuracyMeters: number;
+  latitude?: number;
+  longitude?: number;
+  accuracyMeters?: number;
   locationSnapshotText: string;
   journeyId?: string;
   origin?: string;
@@ -225,5 +203,5 @@ export interface EmergencySosEvent {
   aiRiskLevel?: RiskLevel;
   browserNotificationSent: boolean;
   audioAlertTriggered: boolean;
-  escalationLog: EmergencyEscalationStep[];
+  escalationLog: EmergencyEscalationEntry[];
 }

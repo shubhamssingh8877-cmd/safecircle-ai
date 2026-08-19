@@ -8,7 +8,7 @@ export interface RouteRiskPointContext {
   category: string;
   severity: string;
   distanceToRouteMeters: number;
-  proximity: 'on_route' | 'near_route' | 'nearby';
+  proximity: 'on_route' | 'near_route' | 'nearby' | 'distant';
   upvotes: number;
   description: string;
   segmentIndex: number;
@@ -36,6 +36,10 @@ export interface SafetyContextPayload {
   totalCommunityReportsInArea: number;
 }
 
+/**
+ * Filter community reports within ~1.5km of the traveler's route or current location.
+ * Adds distance and proximity classification ('near_route' | 'nearby' | 'distant').
+ */
 export function filterRelevantCommunityReports(
   reports: SafetyReport[],
   userCoord?: { lat: number; lng: number },
@@ -46,6 +50,7 @@ export function filterRelevantCommunityReports(
     return calculateRouteRiskPoints(routeCoordinates, reports, userCoord, 1200);
   }
 
+  // Fallback if no full polyline exists yet (evaluate distance to user coordinate)
   const evaluated: RouteRiskPoint[] = [];
   for (const rep of reports) {
     if (!rep.coordinates || typeof rep.coordinates.lat !== 'number' || typeof rep.coordinates.lng !== 'number') {
@@ -53,31 +58,29 @@ export function filterRelevantCommunityReports(
     }
     const distToUser = userCoord
       ? haversineDistanceMeters(userCoord.lat, userCoord.lng, rep.coordinates.lat, rep.coordinates.lng)
-      : 800;
+      : 9999;
+
+    let prox: RouteRiskPoint['proximity'] = 'distant';
+    if (distToUser <= 150) prox = 'on_route';
+    else if (distToUser <= 450) prox = 'near_route';
+    else if (distToUser <= 1200) prox = 'nearby';
 
     if (distToUser <= 1500) {
       evaluated.push({
-        reportId: rep.id,
-        reportTitle: rep.title,
-        category: rep.category,
-        severity: rep.severity,
-        description: rep.description,
-        location: rep.location,
-        upvotes: rep.upvotes,
-        coordinates: rep.coordinates,
+        report: rep,
         distanceToRouteMeters: Math.round(distToUser),
-        distanceToUserMeters: Math.round(distToUser),
-        nearestRoutePoint: { lat: rep.coordinates.lat, lng: rep.coordinates.lng },
-        segmentIndex: 0,
-        proximity: distToUser <= 50 ? 'on_route' : distToUser <= 300 ? 'near_route' : 'nearby',
-        priorityScore: 50,
+        proximity: prox,
+        nearestSegmentIndex: 0,
       });
     }
   }
 
-  return evaluated.slice(0, 5);
+  return evaluated.sort((a, b) => a.distanceToRouteMeters - b.distanceToRouteMeters);
 }
 
+/**
+ * Fallback explainable assessment generator when API is unreachable or rate-limited.
+ */
 export function getUnavailableFallbackAssessment(reason: string = 'AI Safety Analysis Unavailable'): SafetyAssessment {
   const now = new Date();
   return {
@@ -100,12 +103,16 @@ export function getUnavailableFallbackAssessment(reason: string = 'AI Safety Ana
   };
 }
 
+/**
+ * Calls Google Gemini API to analyze journey safety context and produce explainable route-risk assessment.
+ */
 export async function analyzeSafetyContext(
   context: SafetyContextPayload,
   customApiKey?: string
 ): Promise<SafetyAssessment> {
   const apiKey = customApiKey || (import.meta.env.VITE_GEMINI_API_KEY as string | undefined)?.trim();
 
+  // If no API key is provided, return structured offline state immediately without crashing
   if (!apiKey) {
     return getUnavailableFallbackAssessment('AI Safety Analysis Unavailable (API Key Not Configured)');
   }
@@ -154,7 +161,7 @@ ${JSON.stringify(context, null, 2)}
 Provide your cautious, explainable route-risk assessment as JSON.`;
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  const timeoutId = setTimeout(() => controller.abort(), 12000); // 12-second timeout
 
   try {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
@@ -178,6 +185,7 @@ Provide your cautious, explainable route-risk assessment as JSON.`;
         generationConfig: {
           responseMimeType: 'application/json',
           temperature: 0.2,
+          maxOutputTokens: 800,
         },
       }),
     });
@@ -185,101 +193,83 @@ Provide your cautious, explainable route-risk assessment as JSON.`;
     clearTimeout(timeoutId);
 
     if (!res.ok) {
-      if (res.status === 400 || res.status === 403) {
-        return getUnavailableFallbackAssessment('AI API Key Invalid or Permissions Denied');
-      } else if (res.status === 429) {
-        return getUnavailableFallbackAssessment('AI Rate Limit Exceeded — Cooldown Active');
-      }
-      return getUnavailableFallbackAssessment(`AI Service Returned HTTP ${res.status}`);
+      const errorText = await res.text();
+      console.warn(`[Gemini API Error] Status ${res.status}:`, errorText);
+      return getUnavailableFallbackAssessment(`AI Engine Error (${res.status})`);
     }
 
     const data = await res.json();
     const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (!rawText) {
-      return getUnavailableFallbackAssessment('AI Safety Analysis Returned Empty Response');
+      return getUnavailableFallbackAssessment('AI Engine returned an empty response');
     }
 
     const parsed = JSON.parse(rawText);
 
-    const rawRiskScore = Number(parsed.riskScore);
-    const riskScore = isNaN(rawRiskScore) ? 50 : Math.max(0, Math.min(100, Math.round(rawRiskScore)));
+    // Validate structured fields with type-safe guards
+    const riskScore = typeof parsed.riskScore === 'number'
+      ? Math.max(0, Math.min(100, Math.round(parsed.riskScore)))
+      : 25;
 
-    const validLevels: Array<'low' | 'moderate' | 'elevated' | 'high'> = ['low', 'moderate', 'elevated', 'high'];
-    const riskLevel: 'low' | 'moderate' | 'elevated' | 'high' = validLevels.includes(parsed.riskLevel)
-      ? parsed.riskLevel
-      : riskScore >= 75
-      ? 'high'
-      : riskScore >= 50
-      ? 'elevated'
-      : riskScore >= 25
-      ? 'moderate'
-      : 'low';
+    const riskLevel: SafetyAssessment['riskLevel'] =
+      ['low', 'moderate', 'elevated', 'high'].includes(parsed.riskLevel)
+        ? parsed.riskLevel
+        : riskScore >= 75 ? 'high' : riskScore >= 50 ? 'elevated' : riskScore >= 25 ? 'moderate' : 'low';
 
-    const summary =
-      typeof parsed.summary === 'string' && parsed.summary.trim()
-        ? parsed.summary.trim()
-        : 'Contextual risk analyzed from active journey telemetry and community reports.';
+    const summary = typeof parsed.summary === 'string' && parsed.summary.trim()
+      ? parsed.summary.trim()
+      : 'Route monitored under standard guardian protocols.';
 
-    const rawFactors = Array.isArray(parsed.factors) ? parsed.factors : [];
-    const factors: SafetyRiskFactor[] = rawFactors
-      .filter((f: any) => f && typeof f === 'object' && f.category && f.explanation)
-      .map((f: any) => ({
-        category: String(f.category),
-        severity: ['low', 'moderate', 'high'].includes(f.severity) ? f.severity : 'moderate',
-        explanation: String(f.explanation),
-      }));
+    const factors = Array.isArray(parsed.factors)
+      ? parsed.factors.filter((f: any) => f && typeof f.category === 'string' && typeof f.explanation === 'string')
+      : [];
 
-    const rawRecs = Array.isArray(parsed.recommendations) ? parsed.recommendations : [];
-    const recommendations: string[] = rawRecs
-      .filter((r: any) => typeof r === 'string' && r.trim().length > 0)
-      .map((r: any) => r.trim());
+    const recommendations = Array.isArray(parsed.recommendations) && parsed.recommendations.length > 0
+      ? parsed.recommendations.filter((r: any) => typeof r === 'string')
+      : [
+          'Stay along well-illuminated main roadways',
+          'Confirm safety check-in prompt upon arrival',
+        ];
 
-    const rawMinutes = Number(parsed.suggestedCheckInMinutes);
-    const suggestedCheckInMinutes = isNaN(rawMinutes)
-      ? 15
-      : Math.max(5, Math.min(60, Math.round(rawMinutes)));
+    const suggestedCheckInMinutes = typeof parsed.suggestedCheckInMinutes === 'number'
+      ? Math.max(5, Math.min(45, Math.round(parsed.suggestedCheckInMinutes)))
+      : 15;
 
-    const rawConf = Number(parsed.confidence);
-    const confidence = isNaN(rawConf) ? 0.8 : Math.max(0.1, Math.min(1.0, Math.round(rawConf * 100) / 100));
+    const confidence = typeof parsed.confidence === 'number'
+      ? Math.max(0.1, Math.min(1.0, parsed.confidence))
+      : 0.85;
 
-    const rawInsights = Array.isArray(parsed.routeInsights) ? parsed.routeInsights : [];
-    const routeInsights: AiRouteInsight[] = rawInsights
-      .filter((ins: any) => ins && typeof ins === 'object' && ins.reportId && ins.explanation)
-      .map((ins: any) => ({
-        reportId: String(ins.reportId),
-        importance: ['low', 'moderate', 'high'].includes(ins.importance) ? ins.importance : 'moderate',
-        explanation: String(ins.explanation),
-      }));
+    const routeInsights: AiRouteInsight[] = Array.isArray(parsed.routeInsights)
+      ? parsed.routeInsights.filter((i: any) => i && typeof i.reportId === 'string' && typeof i.explanation === 'string')
+      : [];
 
-    const routeRecommendation =
-      typeof parsed.routeRecommendation === 'string' && parsed.routeRecommendation.trim()
-        ? parsed.routeRecommendation.trim()
-        : 'Stay on the planned corridor and remain observant of surroundings.';
+    const routeRecommendation = typeof parsed.routeRecommendation === 'string' && parsed.routeRecommendation.trim()
+      ? parsed.routeRecommendation.trim()
+      : 'Follow your planned road corridor and maintain active check-ins.';
 
     const now = new Date();
-    const analyzedAt = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
     return {
       riskScore,
       riskLevel,
       summary,
       factors,
-      recommendations: recommendations.length > 0 ? recommendations : ['Stay alert on your planned path'],
+      recommendations,
       suggestedCheckInMinutes,
       confidence,
-      analyzedAt,
+      analyzedAt: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       isAiAvailable: true,
-      isDemoTelemetry: Boolean(context.journey.isSimulatedDeviation),
-      statusMessage: 'Live Gemini Analysis',
+      statusMessage: 'Live AI Route Intelligence Active (Gemini 2.5 Flash)',
       routeInsights,
       routeRecommendation,
     };
   } catch (error: any) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      return getUnavailableFallbackAssessment('AI Request Timed Out');
+      console.warn('[Gemini API] Request timed out after 12s. Reverting to fallback.');
+      return getUnavailableFallbackAssessment('AI Safety Analysis Timed Out');
     }
-    return getUnavailableFallbackAssessment('AI Network Connection Error');
+    console.warn('[Gemini API] Network or execution failure:', error);
+    return getUnavailableFallbackAssessment('AI Safety Network Failure');
   }
 }

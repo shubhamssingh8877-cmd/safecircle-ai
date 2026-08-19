@@ -1,5 +1,4 @@
-import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { JourneyProvider } from './context/JourneyContext';
 import { MarketingLayout } from './components/layout/MarketingLayout';
@@ -14,18 +13,18 @@ import { ContactsPage } from './pages/ContactsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
-export function App() {
+export const App = () => {
   return (
     <ThemeProvider>
       <JourneyProvider>
         <BrowserRouter>
           <Routes>
-            {/* Public Marketing Route */}
+            {/* Public Landing & Marketing Pages */}
             <Route element={<MarketingLayout />}>
               <Route path="/" element={<LandingPage />} />
             </Route>
 
-            {/* Guarded App Layout Routes */}
+            {/* App Internal Pages */}
             <Route element={<AppLayout />}>
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/journey" element={<JourneyPage />} />
@@ -35,14 +34,13 @@ export function App() {
               <Route path="/settings" element={<SettingsPage />} />
             </Route>
 
-            {/* Fallbacks */}
-            <Route path="/404" element={<NotFoundPage />} />
-            <Route path="*" element={<Navigate to="/404" replace />} />
+            {/* Fallback 404 Route */}
+            <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </BrowserRouter>
       </JourneyProvider>
     </ThemeProvider>
   );
-}
+};
 
 export default App;
