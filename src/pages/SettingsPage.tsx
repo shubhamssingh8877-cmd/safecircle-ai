@@ -39,10 +39,12 @@ export const SettingsPage: React.FC = () => {
 
   // Local editable settings
   const [apiKeyInput, setApiKeyInput] = useState(customApiKey);
-  const [checkinInterval, setCheckinInterval] = useState(15);
+  const [checkinInterval, setCheckinInterval] = useState(preferences.defaultCheckinIntervalMinutes);
   const [deviationSensitivity, setDeviationSensitivity] = useState(preferences.routeDeviationSensitivity);
-  const [stealthTrigger, setStealthTrigger] = useState(preferences.stealthGesture);
-  const [stealthEnabled, setStealthEnabled] = useState(preferences.stealthTriggerEnabled);
+  const [stealthTrigger, setStealthTrigger] = useState(preferences.stealthTriggerMethod);
+  const [stealthEnabled, setStealthEnabled] = useState(preferences.stealthSosEnabled);
+  const [audioRecording, setAudioRecording] = useState(preferences.audioRecordingOnSos);
+  const [batteryShare, setBatteryShare] = useState(preferences.autoShareBatteryLevel);
   const [autoEscalateCount, setAutoEscalateCount] = useState(preferences.autoEscalateAfterMissedCount);
 
   // Medical notes
@@ -53,9 +55,12 @@ export const SettingsPage: React.FC = () => {
     e.preventDefault();
     setCustomApiKey(apiKeyInput);
     updatePreferences({
+      defaultCheckinIntervalMinutes: checkinInterval,
       routeDeviationSensitivity: deviationSensitivity,
-      stealthGesture: stealthTrigger,
-      stealthTriggerEnabled: stealthEnabled,
+      stealthTriggerMethod: stealthTrigger,
+      stealthSosEnabled: stealthEnabled,
+      audioRecordingOnSos: audioRecording,
+      autoShareBatteryLevel: batteryShare,
       autoEscalateAfterMissedCount: autoEscalateCount,
     });
 
@@ -195,9 +200,9 @@ export const SettingsPage: React.FC = () => {
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {[
-                    { id: 'power_button_4x', label: 'Power Button 4x', desc: 'Rapidly press power button 4 times in pocket' },
-                    { id: 'volume_down_triple', label: 'Vol Down (3x)', desc: 'Hardware volume toggle sequence' },
-                    { id: 'shake_device', label: 'Vigorous Shake (3x)', desc: 'Accelerated triple wrist shake motion' },
+                    { id: 'power_quad_press', label: 'Power Button 4x', desc: 'Rapidly press power button 4 times in pocket' },
+                    { id: 'volume_sequence', label: 'Vol Up + Vol Down + Up', desc: 'Hardware volume toggle sequence' },
+                    { id: 'shake_gesture', label: 'Vigorous Shake (3x)', desc: 'Accelerated triple wrist shake motion' },
                   ].map(method => (
                     <button
                       key={method.id}
@@ -216,6 +221,21 @@ export const SettingsPage: React.FC = () => {
                 </div>
               </div>
             )}
+
+            <div className="pt-2 border-t border-surface-100 dark:border-surface-800 space-y-3">
+              <Switch
+                checked={audioRecording}
+                onChange={setAudioRecording}
+                label="Discrete Audio Beacon Recording"
+                description="Securely captures 30-second encrypted audio clip upon SOS activation to forward to Primary Guardian."
+              />
+              <Switch
+                checked={batteryShare}
+                onChange={setBatteryShare}
+                label="Stream Live Battery & Network Signal Telemetry"
+                description="Includes remaining battery percentage in automated emergency SMS packets."
+              />
+            </div>
           </CardContent>
         </Card>
 
@@ -228,126 +248,231 @@ export const SettingsPage: React.FC = () => {
                 <CardTitle>Medical Emergency Escrow</CardTitle>
               </div>
               <CardDescription>
-                Included in Tier 3 emergency dispatch payloads to first responders.
+                Included in Tier 3 emergency dispatch broadcasts.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3">
               <Input
                 label="Blood Type"
                 value={bloodType}
                 onChange={e => setBloodType(e.target.value)}
                 placeholder="e.g. O+, A-, B+"
               />
-              <Input
-                label="Allergies & Critical Notes"
-                value={medicalNotes}
-                onChange={e => setMedicalNotes(e.target.value)}
-                placeholder="e.g. Asthma, Penicillin allergy"
-              />
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-surface-700 dark:text-surface-300">
+                  Critical Medical Notes / Allergies
+                </label>
+                <textarea
+                  value={medicalNotes}
+                  onChange={e => setMedicalNotes(e.target.value)}
+                  rows={3}
+                  className="w-full rounded-lg text-xs bg-white dark:bg-surface-950 border border-surface-300 dark:border-surface-700 p-2.5 text-surface-900 dark:text-surface-100"
+                />
+              </div>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
               <div className="flex items-center gap-2">
-                <Moon className="w-4 h-4 text-brand-500" />
-                <CardTitle>Theme & Interface Mode</CardTitle>
+                <Sliders className="w-4 h-4 text-brand-500" />
+                <CardTitle>Interface & Theme</CardTitle>
               </div>
               <CardDescription>
-                Switch between high-contrast dark mode for low-light travel or daytime theme.
+                High-contrast night vision vs daylight readability.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-3 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setTheme('light')}
-                  className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${
-                    theme === 'light'
-                      ? 'bg-brand-50 dark:bg-brand-950/60 border-brand-500 text-brand-700 dark:text-brand-300 font-semibold shadow-xs'
-                      : 'bg-surface-50/50 dark:bg-surface-950/30 border-surface-200 dark:border-surface-800 text-surface-600 dark:text-surface-400 hover:bg-surface-100/50'
-                  }`}
-                >
-                  <Sun className="w-5 h-5 text-amber-500" />
-                  <span className="text-xs">Day Light</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setTheme('dark')}
-                  className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${
-                    theme === 'dark'
-                      ? 'bg-brand-50 dark:bg-brand-950/60 border-brand-500 text-brand-700 dark:text-brand-300 font-semibold shadow-xs'
-                      : 'bg-surface-50/50 dark:bg-surface-950/30 border-surface-200 dark:border-surface-800 text-surface-600 dark:text-surface-400 hover:bg-surface-100/50'
-                  }`}
-                >
-                  <Moon className="w-5 h-5 text-brand-500" />
-                  <span className="text-xs">Night Guard</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setTheme('system')}
-                  className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${
-                    theme === 'system'
-                      ? 'bg-brand-50 dark:bg-brand-950/60 border-brand-500 text-brand-700 dark:text-brand-300 font-semibold shadow-xs'
-                      : 'bg-surface-50/50 dark:bg-surface-950/30 border-surface-200 dark:border-surface-800 text-surface-600 dark:text-surface-400 hover:bg-surface-100/50'
-                  }`}
-                >
-                  <Sliders className="w-5 h-5 text-surface-500" />
-                  <span className="text-xs">System Auto</span>
-                </button>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'dark', label: 'Dark (Night Guard)', icon: Moon },
+                  { id: 'light', label: 'Light (Day Mode)', icon: Sun },
+                  { id: 'system', label: 'System Automatic', icon: Sliders },
+                ].map(t => {
+                  const Icon = t.icon;
+                  const isActive = theme === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setTheme(t.id as any)}
+                      className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 transition-all text-xs ${
+                        isActive
+                          ? 'bg-brand-50 dark:bg-brand-950 border-brand-500 text-brand-700 dark:text-brand-300 font-semibold'
+                          : 'bg-surface-50 dark:bg-surface-950 border-surface-200 dark:border-surface-800 text-surface-600 dark:text-surface-400'
+                      }`}
+                    >
+                      <Icon className="w-4 h-4" />
+                      <span className="text-[11px] text-center">{t.label}</span>
+                    </button>
+                  );
+                })}
               </div>
 
-              {/* Notification Permission Request */}
-              <div className="pt-2 border-t border-surface-200 dark:border-surface-800 flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <span className="text-xs font-semibold text-surface-900 dark:text-surface-100">
-                    System Browser Notifications
-                  </span>
-                  <p className="text-[11px] text-surface-500">
-                    Enable native browser push prompts for urgent safety pings.
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={requestNotifications}
-                >
-                  Enable Permissions
-                </Button>
+              <div className="p-3 rounded-xl bg-surface-50 dark:bg-surface-950 border border-surface-200 dark:border-surface-800 text-[11px] text-surface-500 leading-relaxed">
+                SafeCircle automatically preserves screen contrast and applies high-visibility accents when Night Guard is active.
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Section 4: Google Gemini AI Key Config */}
+        {/* Section 4: Google Gemini AI Safety Risk Engine */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-brand-500" />
-                <CardTitle>Google Gemini AI Route Intelligence</CardTitle>
+                <CardTitle>Google Gemini AI Safety Risk Engine</CardTitle>
               </div>
-              <Badge variant={aiAssessment?.isAiAvailable ? 'brand' : 'neutral'} size="sm">
-                {aiAssessment?.isAiAvailable ? 'API Connected' : 'Fallback Engine'}
+              <Badge variant={aiAssessment?.isAiAvailable ? 'safe' : 'neutral'} size="sm">
+                {aiAssessment?.isAiAvailable ? 'AI Engine Active' : 'Standby / Unconfigured'}
               </Badge>
             </div>
             <CardDescription>
-              Configure your custom Gemini API Key for dynamic route safety scoring and explainable corridor analysis.
+              Powers explainable contextual risk analysis, time-of-day vigilance, and intelligent check-in recommendations.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <Input
-              label="Gemini API Key"
-              type="password"
-              placeholder="AIzaSy..."
-              value={apiKeyInput}
-              onChange={e => setApiKeyInput(e.target.value)}
-              helperText="Key is securely stored in client-side localStorage and only used for direct generative calls."
-              icon={<Key className="w-4 h-4 text-surface-400" />}
-            />
+          <CardContent className="space-y-4 text-xs">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-surface-700 dark:text-surface-300 flex items-center gap-1.5">
+                <Key className="w-3.5 h-3.5 text-brand-500" />
+                Google Gemini API Key
+              </label>
+              <Input
+                type="password"
+                value={apiKeyInput}
+                onChange={e => setApiKeyInput(e.target.value)}
+                placeholder="Paste your Gemini API key (or set VITE_GEMINI_API_KEY in .env)"
+              />
+              <p className="text-[11px] text-surface-500">
+                SafeCircle never transmits your API key or personal profile to external servers. Inference calls are made directly and locally from your browser to Google Generative Language APIs.
+              </p>
+            </div>
+
+            <div className="p-3 rounded-xl bg-surface-50 dark:bg-surface-950 border border-surface-200 dark:border-surface-800 flex items-center justify-between text-[11px]">
+              <div className="space-y-0.5">
+                <div className="font-semibold text-surface-900 dark:text-surface-100">
+                  Model: Gemini 2.5 Flash
+                </div>
+                <div className="text-surface-500">
+                  Structured JSON Schema • 5-Minute Telemetry Cooldown Guard
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={() => refreshAiSafetyAssessment(true)}
+              >
+                Test AI Engine
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Section 5: Browser Emergency Protocols & Testing */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Radio className="w-4 h-4 text-danger-500" />
+                <CardTitle>Browser Emergency Protocols & Testing</CardTitle>
+              </div>
+              <Badge variant="brand" size="sm">
+                Local Web APIs
+              </Badge>
+            </div>
+            <CardDescription>
+              Test browser push notifications, synthesize Web Audio alarms, and verify client emergency permissions.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 text-xs">
+            <div className="p-3.5 rounded-xl bg-surface-50 dark:bg-surface-950 border border-surface-200 dark:border-surface-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="font-semibold text-surface-900 dark:text-surface-100 flex items-center gap-2">
+                  <span>Browser Notification Permission</span>
+                  <Badge
+                    variant={
+                      typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted'
+                        ? 'safe'
+                        : typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'denied'
+                        ? 'danger'
+                        : 'warning'
+                    }
+                    size="sm"
+                  >
+                    {typeof window !== 'undefined' && 'Notification' in window
+                      ? Notification.permission.toUpperCase()
+                      : 'UNSUPPORTED'}
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-surface-500">
+                  Enables background alert banners for route deviations and missed check-ins.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={async () => {
+                  await requestNotifications();
+                  setSavedSuccess(true);
+                  setTimeout(() => setSavedSuccess(false), 2000);
+                }}
+              >
+                Request Permission
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="p-3 rounded-xl bg-surface-50 dark:bg-surface-950 border border-surface-200 dark:border-surface-800 space-y-2">
+                <div className="font-semibold text-surface-900 dark:text-surface-100">
+                  Web Audio Synthesizer
+                </div>
+                <p className="text-[11px] text-surface-500">
+                  Synthesizes dual-tone 880Hz/660Hz alarm without downloading audio files.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  onClick={() => {
+                    openSosModal();
+                  }}
+                  className="w-full text-danger-600 dark:text-danger-400"
+                >
+                  Test 5s SOS Protocol
+                </Button>
+              </div>
+
+              <div className="p-3 rounded-xl bg-surface-50 dark:bg-surface-950 border border-surface-200 dark:border-surface-800 space-y-2">
+                <div className="font-semibold text-surface-900 dark:text-surface-100">
+                  Test Push Notification
+                </div>
+                <p className="text-[11px] text-surface-500">
+                  Sends an immediate test ping to verify device notification routing.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  onClick={() => {
+                    const ok = typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted';
+                    if (ok) {
+                      new Notification('🔔 SafeCircle Test Notification', {
+                        body: 'Browser notification system is operating nominally.',
+                        icon: '/favicon.ico',
+                      });
+                    } else {
+                      requestNotifications();
+                    }
+                  }}
+                  className="w-full"
+                >
+                  Send Sample Notification
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
