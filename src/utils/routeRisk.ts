@@ -1,11 +1,11 @@
 import { SafetyReport } from '../types';
-import { distanceToSegmentMeters, haversineDistanceMeters } from './geo';
+import { haversineDistanceMeters, pointToSegmentDistance } from './geo';
 
 export interface RouteRiskPoint {
   reportId: string;
   reportTitle: string;
-  category: SafetyReport['category'];
-  severity: SafetyReport['severity'];
+  category: string;
+  severity: string;
   description: string;
   location: string;
   upvotes: number;
@@ -22,19 +22,26 @@ export interface RouteRiskPoint {
   segmentIndex: number;
   proximity: 'on_route' | 'near_route' | 'nearby' | 'distant';
   priorityScore: number;
+  report?: SafetyReport;
 }
 
+/**
+ * Calculates deterministic route-risk points by projecting community hazard reports
+ * onto the active road polyline using local equirectangular planar mathematics.
+ *
+ * All distance metrics, projections, and proximity categorizations are 100% locally computed.
+ */
 export function calculateRouteRiskPoints(
-  routePolyline: [number, number][],
+  routeCoordinates: [number, number][],
   reports: SafetyReport[],
   userPosition?: { lat: number; lng: number },
-  corridorRadiusMeters: number = 1200
+  maxDistanceThresholdMeters: number = 1200
 ): RouteRiskPoint[] {
-  if (!routePolyline || routePolyline.length < 2 || !reports || reports.length === 0) {
+  if (!routeCoordinates || routeCoordinates.length < 2 || !reports || reports.length === 0) {
     return [];
   }
 
-  const riskPoints: RouteRiskPoint[] = [];
+  const results: RouteRiskPoint[] = [];
 
   for (const report of reports) {
     if (
@@ -45,56 +52,52 @@ export function calculateRouteRiskPoints(
       continue;
     }
 
-    const rLat = report.coordinates.lat;
-    const rLng = report.coordinates.lng;
-
+    const reportCoord = { lat: report.coordinates.lat, lng: report.coordinates.lng };
     let minDistanceToRoute = Infinity;
-    let closestRoutePoint = { lat: routePolyline[0][0], lng: routePolyline[0][1] };
+    let nearestPointOnRoute = { lat: routeCoordinates[0][0], lng: routeCoordinates[0][1] };
     let bestSegmentIndex = 0;
 
-    for (let i = 0; i < routePolyline.length - 1; i++) {
-      const a = routePolyline[i];
-      const b = routePolyline[i + 1];
+    // Project report onto each segment of the planned road polyline
+    for (let i = 0; i < routeCoordinates.length - 1; i++) {
+      const segStart = { lat: routeCoordinates[i][0], lng: routeCoordinates[i][1] };
+      const segEnd = { lat: routeCoordinates[i + 1][0], lng: routeCoordinates[i + 1][1] };
 
-      const { distanceMeters, nearestPoint } = distanceToSegmentMeters(
-        rLat,
-        rLng,
-        a[0],
-        a[1],
-        b[0],
-        b[1]
-      );
-
-      if (distanceMeters < minDistanceToRoute) {
-        minDistanceToRoute = distanceMeters;
-        closestRoutePoint = nearestPoint;
+      const projection = pointToSegmentDistance(reportCoord, segStart, segEnd);
+      if (projection.distanceMeters < minDistanceToRoute) {
+        minDistanceToRoute = projection.distanceMeters;
+        nearestPointOnRoute = projection.nearestPoint;
         bestSegmentIndex = i;
       }
     }
 
-    if (minDistanceToRoute <= corridorRadiusMeters) {
-      let proximity: RouteRiskPoint['proximity'] = 'distant';
-      if (minDistanceToRoute <= 40) {
+    // Filter reports within proximity threshold of the route
+    if (minDistanceToRoute <= maxDistanceThresholdMeters) {
+      let proximity: 'on_route' | 'near_route' | 'nearby' = 'nearby';
+      if (minDistanceToRoute <= 50) {
         proximity = 'on_route';
-      } else if (minDistanceToRoute <= 250) {
+      } else if (minDistanceToRoute <= 300) {
         proximity = 'near_route';
-      } else {
-        proximity = 'nearby';
       }
 
-      let severityMultiplier = 1;
-      if (report.severity === 'warning') severityMultiplier = 3;
-      else if (report.severity === 'caution') severityMultiplier = 2;
+      // Distance from current user position if available
+      let distanceToUser: number | undefined = undefined;
+      if (userPosition) {
+        distanceToUser = Math.round(
+          haversineDistanceMeters(userPosition.lat, userPosition.lng, reportCoord.lat, reportCoord.lng)
+        );
+      }
 
-      const proximityWeight = Math.max(1, Math.round((corridorRadiusMeters - minDistanceToRoute) / 100));
-      const upvoteBonus = Math.min(20, (report.upvotes || 0) * 2);
-      const priorityScore = severityMultiplier * 25 + proximityWeight + upvoteBonus;
+      // Deterministic explainable priority score:
+      // Severity weight: warning = 50, caution = 25, advisory = 10
+      // Proximity weight: closer to route = higher score
+      // Community corroboration: upvotes * 5
+      const severityWeight =
+        report.severity === 'warning' ? 50 : report.severity === 'caution' ? 25 : 10;
+      const proximityWeight = Math.max(0, (maxDistanceThresholdMeters - minDistanceToRoute) / 20);
+      const communityWeight = (report.upvotes || 0) * 5;
+      const priorityScore = Math.round(severityWeight + proximityWeight + communityWeight);
 
-      const distanceToUser = userPosition
-        ? Math.round(haversineDistanceMeters(userPosition.lat, userPosition.lng, rLat, rLng))
-        : undefined;
-
-      riskPoints.push({
+      results.push({
         reportId: report.id,
         reportTitle: report.title,
         category: report.category,
@@ -102,10 +105,13 @@ export function calculateRouteRiskPoints(
         description: report.description,
         location: report.location,
         upvotes: report.upvotes,
-        coordinates: report.coordinates,
+        coordinates: reportCoord,
         distanceToRouteMeters: Math.round(minDistanceToRoute),
         distanceToUserMeters: distanceToUser,
-        nearestRoutePoint: closestRoutePoint,
+        nearestRoutePoint: {
+          lat: Math.round(nearestPointOnRoute.lat * 100000) / 100000,
+          lng: Math.round(nearestPointOnRoute.lng * 100000) / 100000,
+        },
         segmentIndex: bestSegmentIndex,
         proximity,
         priorityScore,
@@ -113,5 +119,6 @@ export function calculateRouteRiskPoints(
     }
   }
 
-  return riskPoints.sort((a, b) => b.priorityScore - a.priorityScore);
+  // Sort by deterministic priority score descending, capped to top 5
+  return results.sort((a, b) => b.priorityScore - a.priorityScore).slice(0, 5);
 }

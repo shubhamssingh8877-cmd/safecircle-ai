@@ -94,7 +94,7 @@ const createUserIcon = () =>
 const createHavenIcon = (type: SafeHaven['type']) => {
   const isPolice = type === 'police';
   const isHospital = type === 'hospital';
-  const isPharmacy = type === 'pharmacy';
+  const isPharmacy = type === 'pharmacy_247' || type === 'pharmacy';
   const bgColor = isPolice ? '#0284c7' : isHospital ? '#dc2626' : isPharmacy ? '#059669' : '#4f46e5';
 
   return L.divIcon({
@@ -165,6 +165,7 @@ export const RiskMapPage: React.FC = () => {
   const [formSeverity, setFormSeverity] = useState<SafetyReport['severity']>('advisory');
   const [formLocation, setFormLocation] = useState('');
   const [formDescription, setFormDescription] = useState('');
+  const [isAnonymous, setIsAnonymous] = useState(true);
 
   // Default fallback center for demo safety mesh (San Francisco corridor)
   const defaultCenter: [number, number] = [37.7765, -122.4150];
@@ -200,34 +201,37 @@ export const RiskMapPage: React.FC = () => {
 
   const handleMapClick = (coords: { lat: number; lng: number }) => {
     setDraftCoordinates(coords);
-    setFormLocation(`Pinned Location (${coords.lat.toFixed(4)}°, ${coords.lng.toFixed(4)}°)`);
+    setFormLocation(`${coords.lat.toFixed(5)}° N, ${coords.lng.toFixed(5)}° W`);
   };
 
-  const handleOpenModalFromDraft = () => {
-    if (!draftCoordinates) return;
-    setIsReportModalOpen(true);
-  };
-
-  const handleCancelDraft = () => {
+  const handleCancelDraftPin = () => {
     setDraftCoordinates(null);
   };
 
-  const handleSubmitMapReport = (e: React.FormEvent) => {
+  const handleOpenReportFromDraft = () => {
+    setIsReportModalOpen(true);
+  };
+
+  const handleSubmitModalReport = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formTitle.trim() || !draftCoordinates) return;
+    if (!formTitle.trim() || !formLocation.trim() || !formDescription.trim()) return;
+
+    const coordsToUse = draftCoordinates || {
+      lat: position ? position.latitude : 37.7765,
+      lng: position ? position.longitude : -122.4150,
+    };
 
     addSafetyReport({
-      title: formTitle,
+      title: formTitle.trim(),
       category: formCategory,
       severity: formSeverity,
-      location: formLocation || `Near ${draftCoordinates.lat.toFixed(4)}°, ${draftCoordinates.lng.toFixed(4)}°`,
-      coordinates: draftCoordinates,
-      description: formDescription || 'Observed by traveler and pinned directly to the safety map.',
+      location: formLocation.trim(),
+      coordinates: coordsToUse,
+      description: formDescription.trim(),
     });
 
-    // Reset Form
+    // Reset and close
     setFormTitle('');
-    setFormLocation('');
     setFormDescription('');
     setDraftCoordinates(null);
     setIsReportModalOpen(false);
@@ -235,333 +239,453 @@ export const RiskMapPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Top Header & Layer Filter Chips */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-bold text-surface-900 dark:text-surface-50 tracking-tight">
-              Contextual Risk Radar & Safe Havens
+              Contextual Risk Radar
             </h2>
             <Badge variant="brand" size="sm">
-              Live Map Engine
+              Live Geospatial Mesh
             </Badge>
           </div>
           <p className="text-xs text-surface-500 dark:text-surface-400">
-            OpenStreetMap geospatial layer featuring verified 24/7 safe havens, crowd hazard pins, and AI risk scoring.
+            OpenStreetMap radar highlighting community hazard alerts, verified safe havens, and real GPS position.
           </p>
         </div>
 
-        {/* Filter Tabs */}
-        <div className="flex flex-wrap items-center gap-1.5 p-1 bg-surface-100 dark:bg-surface-800/80 rounded-xl border border-surface-200/80 dark:border-surface-700/80">
-          {[
-            { id: 'all', label: 'All Layers' },
-            { id: 'safe_havens', label: 'Safe Havens (24/7)' },
-            { id: 'incidents', label: 'Hazard Pins' },
-            { id: 'lighting', label: 'Streetlight Radar' },
-            { id: 'route_risks', label: 'Route Corridor Risks' },
-          ].map(tab => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setFilterLayer(tab.id as any)}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                filterLayer === tab.id
-                  ? 'bg-white dark:bg-surface-900 text-brand-600 dark:text-brand-400 shadow-xs'
-                  : 'text-surface-600 dark:text-surface-400 hover:text-surface-900 dark:hover:text-surface-100'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        {/* Action Controls */}
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleLocateMe}
+            icon={<Navigation className="w-3.5 h-3.5 text-brand-500" />}
+          >
+            Center on GPS
+          </Button>
         </div>
       </div>
 
-      {/* Main Map Container Card */}
-      <Card className="overflow-hidden p-0 border-surface-200 dark:border-surface-800">
-        <div className="relative h-[540px] sm:h-[620px] w-full bg-surface-100 dark:bg-surface-950">
-          {/* Leaflet Map */}
-          <MapContainer
-            center={activeMapCenter}
-            zoom={14}
-            style={{ height: '100%', width: '100%', zIndex: 1 }}
-            zoomControl={true}
+      {/* Layer Filter Toolbar */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+        <span className="text-xs font-semibold text-surface-500 shrink-0 mr-1">Filter Radar:</span>
+        {[
+          { id: 'all', label: 'All Markers' },
+          { id: 'safe_havens', label: `Safe Havens (${safeHavens.length})` },
+          { id: 'incidents', label: `Community Reports (${reports.length})` },
+          { id: 'lighting', label: 'Dark / Lighting Issues' },
+          { id: 'route_risks', label: `Corridor Risks (${routeRiskPoints.length})` },
+        ].map(filter => (
+          <button
+            key={filter.id}
+            type="button"
+            onClick={() => setFilterLayer(filter.id as any)}
+            className={`px-3 py-1.5 rounded-lg border font-medium whitespace-nowrap transition-all ${
+              filterLayer === filter.id
+                ? 'bg-brand-600 border-brand-600 text-white shadow-xs'
+                : 'bg-white dark:bg-surface-900 border-surface-200 dark:border-surface-800 text-surface-600 dark:text-surface-400 hover:bg-surface-50 dark:hover:bg-surface-800'
+            }`}
           >
-            <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
+            {filter.label}
+          </button>
+        ))}
+      </div>
 
-            {/* Recenter controller */}
-            <MapViewController center={activeMapCenter} zoom={14} triggerRecenter={recenterCount} />
-
-            {/* Map click listener */}
-            <MapClickHandler onMapClick={handleMapClick} />
-
-            {/* Active Journey Route Polyline (if present) */}
-            {activeRouteCoords && (
-              <Polyline
-                positions={activeRouteCoords}
-                pathOptions={{
-                  color: journey?.deviationDetected ? '#dc2626' : '#059669',
-                  weight: 5,
-                  opacity: 0.85,
-                  lineCap: 'round',
-                  lineJoin: 'round',
-                }}
+      {/* Main Grid: Interactive Map + Context Panel */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Map Container */}
+        <div className="lg:col-span-8 relative">
+          <div className="h-[560px] sm:h-[620px] rounded-2xl overflow-hidden border border-surface-200 dark:border-surface-800 shadow-sm relative z-0">
+            <MapContainer
+              center={activeMapCenter}
+              zoom={14}
+              scrollWheelZoom={true}
+              className="h-full w-full"
+            >
+              <TileLayer
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
-            )}
 
-            {/* User GPS Live Marker */}
-            {position && (
-              <>
-                <Marker
-                  position={[position.latitude, position.longitude]}
-                  icon={createUserIcon()}
-                >
-                  <Popup>
-                    <div className="text-xs space-y-1">
-                      <strong className="text-brand-600 block">Your Verified GPS Location</strong>
-                      <p>
-                        {position.latitude.toFixed(5)}° N, {position.longitude.toFixed(5)}° W
-                      </p>
-                      {accuracy && (
-                        <p className="text-[10px] text-surface-500">
-                          Accuracy Radius: ±{Math.round(accuracy)}m
-                        </p>
-                      )}
-                    </div>
-                  </Popup>
-                </Marker>
+              <MapViewController center={activeMapCenter} zoom={14} triggerRecenter={recenterCount} />
+              <MapClickHandler onMapClick={handleMapClick} />
 
-                {accuracy && (
-                  <Circle
-                    center={[position.latitude, position.longitude]}
-                    radius={accuracy}
-                    pathOptions={{
-                      color: '#0284c7',
-                      fillColor: '#0284c7',
-                      fillOpacity: 0.1,
-                      weight: 1,
-                    }}
-                  />
-                )}
-              </>
-            )}
-
-            {/* Click-to-Report Draft Pin Marker */}
-            {draftCoordinates && (
-              <Marker
-                position={[draftCoordinates.lat, draftCoordinates.lng]}
-                icon={createDraftIcon()}
-              >
-                <Popup autoPan={true}>
-                  <div className="text-xs space-y-2 p-1 min-w-[200px]">
-                    <div className="flex items-center gap-1.5 text-amber-600 font-bold">
-                      <MapPin className="w-4 h-4 shrink-0" />
-                      <span>Pin Location Selected</span>
-                    </div>
-                    <p className="text-[11px] text-surface-600 dark:text-surface-300 font-mono">
-                      {draftCoordinates.lat.toFixed(5)}° N, {draftCoordinates.lng.toFixed(5)}° W
-                    </p>
-                    <div className="flex items-center gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={handleOpenModalFromDraft}
-                        className="px-2.5 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold text-[11px] transition-colors"
-                      >
-                        Report Hazard Here
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleCancelDraft}
-                        className="px-2 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200 dark:bg-surface-800 text-surface-700 dark:text-surface-300 text-[11px] transition-colors"
-                      >
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-                </Popup>
-              </Marker>
-            )}
-
-            {/* Safe Havens Layer */}
-            {(filterLayer === 'all' || filterLayer === 'safe_havens') &&
-              safeHavens.map(haven => (
-                <Marker
-                  key={haven.id}
-                  position={[haven.coordinates.lat, haven.coordinates.lng]}
-                  icon={createHavenIcon(haven.type)}
-                >
-                  <Popup>
-                    <div className="text-xs space-y-1.5 max-w-[220px]">
-                      <div className="flex items-center justify-between gap-2">
-                        <strong className="text-surface-900 block font-bold truncate">
-                          {haven.name}
-                        </strong>
-                        <Badge variant="brand" size="sm">
-                          {haven.type.replace('_', ' ').toUpperCase()}
-                        </Badge>
-                      </div>
-                      <p className="text-surface-600 text-[11px]">{haven.address}</p>
-                      <div className="flex items-center justify-between pt-1 border-t border-surface-200 text-[10px]">
-                        <span className="text-safe-600 font-semibold">
-                          {haven.isOpen24Hours ? '● Open 24/7' : 'Standard Hours'}
-                        </span>
-                        <a
-                          href={`tel:${haven.phoneNumber}`}
-                          className="text-brand-600 font-bold hover:underline"
-                        >
-                          Call Direct
-                        </a>
-                      </div>
-                    </div>
-                  </Popup>
-                </Marker>
-              ))}
-
-            {/* Safety Hazard Reports Layer */}
-            {(filterLayer === 'all' || filterLayer === 'incidents' || filterLayer === 'lighting') &&
-              reports
-                .filter(rep => (filterLayer === 'lighting' ? rep.category === 'lighting' : true))
-                .map(rep => (
+              {/* User GPS Live Position Marker */}
+              {position && (
+                <>
                   <Marker
-                    key={rep.id}
-                    position={[rep.coordinates.lat, rep.coordinates.lng]}
-                    icon={createIncidentIcon(rep.category, rep.severity)}
+                    position={[position.latitude, position.longitude]}
+                    icon={createUserIcon()}
                   >
                     <Popup>
-                      <div className="text-xs space-y-2 max-w-[220px]">
-                        <div className="flex items-center justify-between gap-2">
-                          <Badge
-                            variant={
-                              rep.severity === 'warning'
-                                ? 'danger'
-                                : rep.severity === 'caution'
-                                ? 'warning'
-                                : 'neutral'
-                            }
-                            size="sm"
-                          >
-                            {rep.category.toUpperCase()}
-                          </Badge>
-                          <span className="text-[10px] text-surface-400 font-mono">
-                            {rep.timeAgo}
-                          </span>
+                      <div className="p-1 space-y-1 text-xs">
+                        <div className="font-bold text-surface-900">Your Live GPS Location</div>
+                        <div className="font-mono text-[11px] text-surface-500">
+                          {position.latitude.toFixed(5)}° N, {position.longitude.toFixed(5)}° W
                         </div>
-                        <strong className="text-surface-900 font-semibold block">
-                          {rep.title}
-                        </strong>
-                        <p className="text-surface-600 text-[11px] leading-relaxed">
-                          {rep.description}
-                        </p>
-                        <div className="flex items-center justify-between pt-1 border-t border-surface-200 text-[10px]">
-                          <span className="text-surface-500">{rep.location}</span>
-                          <button
-                            type="button"
-                            onClick={() => upvoteReport(rep.id)}
-                            className="flex items-center gap-1 text-brand-600 font-bold hover:underline"
+                        {accuracy !== null && (
+                          <div className="text-[10px] text-surface-400">
+                            Accuracy radius: ±{Math.round(accuracy)}m
+                          </div>
+                        )}
+                      </div>
+                    </Popup>
+                  </Marker>
+
+                  {/* Accuracy buffer circle */}
+                  {accuracy && accuracy < 200 && (
+                    <Circle
+                      center={[position.latitude, position.longitude]}
+                      radius={accuracy}
+                      pathOptions={{
+                        color: '#0284c7',
+                        fillColor: '#0284c7',
+                        fillOpacity: 0.1,
+                        weight: 1,
+                      }}
+                    />
+                  )}
+                </>
+              )}
+
+              {/* Click-to-Pin Draft Marker */}
+              {draftCoordinates && (
+                <Marker
+                  position={[draftCoordinates.lat, draftCoordinates.lng]}
+                  icon={createDraftIcon()}
+                >
+                  <Popup>
+                    <div className="p-2 space-y-2 text-xs max-w-[200px]">
+                      <div className="font-bold text-amber-800">Pin Placed on Map</div>
+                      <div className="font-mono text-[11px] text-surface-600">
+                        {draftCoordinates.lat.toFixed(5)}°, {draftCoordinates.lng.toFixed(5)}°
+                      </div>
+                      <div className="flex flex-col gap-1.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={handleOpenReportFromDraft}
+                          className="w-full py-1 px-2 rounded bg-amber-500 hover:bg-amber-600 text-white font-semibold text-[11px] text-center"
+                        >
+                          Report Incident Here
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCancelDraftPin}
+                          className="w-full py-0.5 text-[10px] text-surface-500 hover:text-surface-800 text-center"
+                        >
+                          Remove Pin
+                        </button>
+                      </div>
+                    </div>
+                  </Popup>
+                </Marker>
+              )}
+
+              {/* Active Journey Route Polyline (if active) */}
+              {journey && journey.status === 'active' && journey.routeCoordinates && (
+                <Polyline
+                  positions={journey.routeCoordinates}
+                  pathOptions={{
+                    color: journey.deviationDetected ? '#dc2626' : '#2563eb',
+                    weight: 5,
+                    opacity: 0.85,
+                    dashArray: journey.deviationDetected ? '6, 8' : undefined,
+                  }}
+                />
+              )}
+
+              {/* Safe Havens Layer */}
+              {(filterLayer === 'all' || filterLayer === 'safe_havens') &&
+                safeHavens.map(haven => (
+                  <Marker
+                    key={haven.id}
+                    position={[haven.coordinates.lat, haven.coordinates.lng]}
+                    icon={createHavenIcon(haven.type)}
+                  >
+                    <Popup>
+                      <div className="p-1 space-y-1.5 text-xs max-w-[220px]">
+                        <div className="font-bold text-surface-900">{haven.name}</div>
+                        <div className="text-[11px] text-surface-600">{haven.address}</div>
+                        <div className="flex items-center justify-between text-[11px] pt-1">
+                          <Badge variant="safe" size="sm">
+                            {haven.isOpen24Hours ? 'Open 24/7' : 'Standard Hours'}
+                          </Badge>
+                          <a
+                            href={`tel:${haven.phoneNumber}`}
+                            className="font-semibold text-brand-600 hover:underline"
                           >
-                            <ThumbsUp className="w-3 h-3" />
-                            <span>{rep.upvotes}</span>
-                          </button>
+                            {haven.phoneNumber}
+                          </a>
                         </div>
                       </div>
                     </Popup>
                   </Marker>
                 ))}
-          </MapContainer>
 
-          {/* Floating Map Controls */}
-          <div className="absolute top-3 right-3 z-10 flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={handleLocateMe}
-              className="p-2.5 rounded-xl bg-white/90 dark:bg-surface-900/90 backdrop-blur-md shadow-md border border-surface-200 dark:border-surface-700 text-surface-700 dark:text-surface-200 hover:text-brand-600 transition-colors"
-              title="Locate Device GPS"
-            >
-              <Navigation className="w-4 h-4" />
-            </button>
-          </div>
+              {/* Community Reports Layer */}
+              {(filterLayer === 'all' || filterLayer === 'incidents' || filterLayer === 'lighting' || filterLayer === 'route_risks') &&
+                reports
+                  .filter(rep => {
+                    if (filterLayer === 'lighting') return rep.category === 'lighting';
+                    if (filterLayer === 'route_risks') {
+                      return routeRiskPoints.some(r => r.reportId === rep.id);
+                    }
+                    return true;
+                  })
+                  .map(report => {
+                    const isRiskPoint = routeRiskPoints.some(r => r.reportId === report.id);
+                    return (
+                      <Marker
+                        key={report.id}
+                        position={[report.coordinates.lat, report.coordinates.lng]}
+                        icon={createIncidentIcon(report.category, report.severity, isRiskPoint)}
+                      >
+                        <Popup>
+                          <div className="p-1 space-y-2 text-xs max-w-[220px]">
+                            <div className="flex items-center justify-between">
+                              <Badge
+                                variant={
+                                  report.severity === 'warning'
+                                    ? 'danger'
+                                    : report.severity === 'caution'
+                                    ? 'warning'
+                                    : 'neutral'
+                                }
+                                size="sm"
+                              >
+                                {report.category.toUpperCase()}
+                              </Badge>
+                              <span className="text-[10px] text-surface-400">{report.timeAgo}</span>
+                            </div>
+                            <div className="font-bold text-surface-900 leading-tight">
+                              {report.title}
+                            </div>
+                            <p className="text-[11px] text-surface-600">{report.description}</p>
+                            <div className="flex items-center justify-between pt-1 border-t border-surface-200">
+                              <span className="text-[10px] text-surface-500 font-mono">
+                                {report.upvotes} verified votes
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => upvoteReport(report.id)}
+                                className="text-[11px] font-semibold text-brand-600 hover:underline"
+                              >
+                                Upvote
+                              </button>
+                            </div>
+                          </div>
+                        </Popup>
+                      </Marker>
+                    );
+                  })}
+            </MapContainer>
 
-          {/* Click to Report Help Pill */}
-          <div className="absolute top-3 left-3 z-10 p-2.5 rounded-xl bg-white/90 dark:bg-surface-900/90 backdrop-blur-md border border-surface-200/80 dark:border-surface-800/80 shadow-md flex items-center gap-2 text-xs">
-            <MapPin className="w-3.5 h-3.5 text-amber-500" />
-            <span className="text-surface-600 dark:text-surface-300">
-              {draftCoordinates ? 'Pin selected! Tap "Report Hazard Here"' : 'Click anywhere on map to pin a hazard'}
-            </span>
-          </div>
-
-          {/* Live Floating Draft Banner when coordinates pinned */}
-          {draftCoordinates && (
-            <div className="absolute bottom-3 left-3 right-3 z-10 p-3 rounded-xl bg-amber-500 text-white shadow-xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2">
-              <div className="flex items-center gap-2.5">
-                <MapPin className="w-5 h-5 shrink-0" />
-                <div className="text-xs">
-                  <span className="font-bold block">Pin Placed at Coordinates</span>
-                  <span className="font-mono text-[11px] opacity-90">
-                    {draftCoordinates.lat.toFixed(5)}° N, {draftCoordinates.lng.toFixed(5)}° W
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleOpenModalFromDraft}
-                  className="bg-white text-surface-900 hover:bg-surface-100 font-bold"
-                >
-                  Create Incident Report Here
-                </Button>
-                <button
-                  type="button"
-                  onClick={handleCancelDraft}
-                  className="px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-xs font-semibold text-white transition-colors"
-                >
-                  Clear Pin
-                </button>
+            {/* Click-to-Pin Instruction Banner on Map */}
+            <div className="absolute top-3 left-3 z-[1000] pointer-events-none">
+              <div className="px-3 py-1.5 rounded-lg bg-surface-900/85 backdrop-blur-md text-white text-[11px] font-medium border border-surface-700 shadow-md flex items-center gap-1.5 pointer-events-auto">
+                <MapPin className="w-3.5 h-3.5 text-amber-400" />
+                <span>Click anywhere on the map to drop an observation pin</span>
               </div>
             </div>
-          )}
-        </div>
-      </Card>
 
-      {/* Click-to-Report Modal */}
+            {/* Floating Draft Pin Control (appears when a draft pin is placed) */}
+            {draftCoordinates && (
+              <div className="absolute bottom-4 left-4 right-4 z-[1000] p-3.5 rounded-xl bg-surface-900/95 backdrop-blur-md text-white border border-amber-500/50 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in slide-in-from-bottom-2">
+                <div className="space-y-0.5">
+                  <div className="font-bold text-xs flex items-center gap-1.5 text-amber-400">
+                    <MapPin className="w-4 h-4" />
+                    <span>Observation Pin Placed: {formatCoordinates(draftCoordinates.lat, draftCoordinates.lng)}</span>
+                  </div>
+                  <p className="text-[11px] text-surface-300">
+                    Ready to log a safety observation at these exact geographic coordinates.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleCancelDraftPin}
+                    className="text-surface-300 hover:text-white"
+                  >
+                    Cancel Pin
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleOpenReportFromDraft}
+                    className="bg-amber-500 hover:bg-amber-600 text-white font-bold"
+                  >
+                    Report Hazard Here
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right Column: AI Safety Corridor & Live Signals */}
+        <div className="lg:col-span-4 space-y-4">
+          {/* Live GPS Telemetry Status */}
+          <div className="p-4 rounded-xl bg-surface-50 dark:bg-surface-900 border border-surface-200 dark:border-surface-800 space-y-2 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-surface-900 dark:text-surface-100 flex items-center gap-1.5">
+                <Navigation className="w-3.5 h-3.5 text-brand-500" />
+                GPS Telemetry Stream
+              </span>
+              <Badge
+                variant={
+                  status === 'active'
+                    ? 'safe'
+                    : status === 'requesting'
+                    ? 'warning'
+                    : status === 'denied'
+                    ? 'danger'
+                    : 'neutral'
+                }
+                size="sm"
+              >
+                {status === 'active'
+                  ? 'LIVE GPS'
+                  : status === 'requesting'
+                  ? 'ACQUIRING'
+                  : status === 'denied'
+                  ? 'PERMISSION DENIED'
+                  : 'STANDBY'}
+              </Badge>
+            </div>
+            <p className="text-[11px] text-surface-500 leading-relaxed">
+              {status === 'active' && position
+                ? `Position fix: ${position.latitude.toFixed(5)}° N, ${position.longitude.toFixed(5)}° W (accuracy ±${Math.round(accuracy || 15)}m)`
+                : error || 'Click "Enable Location" to show your real-time position on the safety radar.'}
+            </p>
+            {status !== 'active' ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={retry}
+                icon={<RefreshCw className="w-3.5 h-3.5" />}
+                className="w-full mt-1"
+              >
+                {status === 'denied' ? 'Try Again' : 'Enable Location'}
+              </Button>
+            ) : null}
+          </div>
+
+          {/* AI Route Corridor Intelligence (if journey active) */}
+          {journey && journey.status === 'active' && journey.routeCoordinates && journey.routeCoordinates.length > 0 && (
+            <div className="p-4 rounded-xl bg-brand-50/50 dark:bg-brand-950/40 border border-brand-500/30 space-y-3 text-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 font-bold text-brand-700 dark:text-brand-300">
+                  <Sparkles className="w-4 h-4" />
+                  <span>AI Route Corridor Analysis</span>
+                </div>
+                <Badge variant={journey.deviationDetected ? 'danger' : 'safe'} size="sm">
+                  {journey.deviationDetected ? 'DEVIATING' : 'CORRIDOR ACTIVE'}
+                </Badge>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-white/80 dark:bg-surface-900/80 border border-brand-500/20 text-[11px] text-surface-600 dark:text-surface-300 leading-relaxed">
+                {aiAssessment?.summary || 'SafeCircle AI continuously monitors community hazards and lighting along your active route.'}
+              </div>
+
+              {routeRiskPoints.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="text-[11px] font-semibold text-surface-700 dark:text-surface-300">
+                    {routeRiskPoints.length} Hazard Signals Along Corridor:
+                  </div>
+                  {routeRiskPoints.map(pt => (
+                    <div
+                      key={pt.reportId}
+                      className="p-2 rounded-lg bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 text-[11px] flex items-center justify-between gap-2"
+                    >
+                      <div className="truncate">
+                        <span className="font-semibold text-surface-900 dark:text-surface-100">{pt.reportTitle}</span>
+                        <div className="text-[10px] text-surface-500 capitalize">
+                          {pt.category} • {pt.distanceToRouteMeters}m from road
+                        </div>
+                      </div>
+                      <Badge
+                        variant={pt.severity === 'warning' ? 'danger' : pt.severity === 'caution' ? 'warning' : 'neutral'}
+                        size="sm"
+                      >
+                        {pt.proximity.replace('_', ' ')}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Quick List of Nearby Safe Havens */}
+          <div className="p-4 rounded-xl bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 space-y-3 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-surface-900 dark:text-surface-100 flex items-center gap-1.5">
+                <Shield className="w-3.5 h-3.5 text-safe-500" />
+                Nearby Verified Havens
+              </span>
+              <span className="text-[11px] text-surface-400 font-mono">{safeHavens.length} active</span>
+            </div>
+
+            <div className="space-y-2">
+              {safeHavens.slice(0, 3).map(haven => (
+                <div
+                  key={haven.id}
+                  className="p-2.5 rounded-lg bg-surface-50 dark:bg-surface-950/60 border border-surface-200 dark:border-surface-800 space-y-1"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-surface-900 dark:text-surface-100">{haven.name}</span>
+                    <span className="text-[10px] font-mono text-surface-500">{haven.distanceKm} km</span>
+                  </div>
+                  <div className="text-[11px] text-surface-500">{haven.address}</div>
+                  <div className="flex items-center justify-between pt-1">
+                    <Badge variant="safe" size="sm">
+                      {haven.isOpen24Hours ? '24/7 Accessible' : 'Open'}
+                    </Badge>
+                    <a
+                      href={`tel:${haven.phoneNumber}`}
+                      className="text-[11px] font-semibold text-brand-600 hover:underline flex items-center gap-1"
+                    >
+                      <Phone className="w-3 h-3" />
+                      <span>{haven.phoneNumber}</span>
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Map Click-to-Report Modal */}
       <Modal
         isOpen={isReportModalOpen}
         onClose={() => setIsReportModalOpen(false)}
-        title="Report Safety Hazard at Pinned Location"
-        description="Submit crowd-sourced observation to protect other solo travelers in your area."
+        title="Report Hazard at Pinned Location"
+        description="Share a safety observation tagged to your clicked map coordinates."
       >
-        <form onSubmit={handleSubmitMapReport} className="space-y-4">
-          {draftCoordinates && (
-            <div className="p-3 rounded-xl bg-surface-50 dark:bg-surface-950 border border-surface-200 dark:border-surface-800 text-xs flex items-center justify-between">
-              <span className="text-surface-500">Pinned Geographic Anchor:</span>
-              <span className="font-mono font-semibold text-brand-600 dark:text-brand-400">
-                {draftCoordinates.lat.toFixed(5)}° N, {draftCoordinates.lng.toFixed(5)}° W
-              </span>
-            </div>
-          )}
-
+        <form onSubmit={handleSubmitModalReport} className="space-y-4">
           <Input
-            label="Incident / Hazard Title"
-            placeholder="e.g. Streetlamp outage on north sidewalk"
+            label="Observation Title"
             value={formTitle}
             onChange={e => setFormTitle(e.target.value)}
+            placeholder="e.g. Streetlights extinguished along park pathway"
             required
           />
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Select
               label="Hazard Category"
               value={formCategory}
               onChange={e => setFormCategory(e.target.value as any)}
               options={[
-                { value: 'lighting', label: 'Streetlight / Low Visibility' },
-                { value: 'suspicious', label: 'Suspicious Activity' },
-                { value: 'infrastructure', label: 'Broken Sidewalk / Construction' },
-                { value: 'transit', label: 'Transit Stop Concern' },
-                { value: 'harassment', label: 'Harassment / Safety Concern' },
+                { value: 'lighting', label: 'Dark / Missing Streetlights' },
+                { value: 'suspicious', label: 'Suspicious Activity / Loitering' },
+                { value: 'infrastructure', label: 'Damaged Infrastructure / Debris' },
+                { value: 'transit', label: 'Transit Delay / Outage' },
+                { value: 'harassment', label: 'Harassment / Unsafe Corridor' },
               ]}
             />
 
@@ -571,43 +695,57 @@ export const RiskMapPage: React.FC = () => {
               onChange={e => setFormSeverity(e.target.value as any)}
               options={[
                 { value: 'advisory', label: 'Advisory (General Info)' },
-                { value: 'caution', label: 'Caution (Moderate Detour)' },
-                { value: 'warning', label: 'Warning (Avoid Corridor)' },
+                { value: 'caution', label: 'Caution (Be Aware)' },
+                { value: 'warning', label: 'Warning (Urgent / Avoid Zone)' },
               ]}
             />
           </div>
 
           <Input
-            label="Location Description"
-            placeholder="e.g. Near 5th & Market crosswalk"
+            label="Location Description / Coordinates"
             value={formLocation}
             onChange={e => setFormLocation(e.target.value)}
+            placeholder="e.g. Near Market St & 8th intersection"
+            required
           />
 
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-surface-700 dark:text-surface-300">
-              Detailed Description
+            <label className="text-xs font-medium text-surface-700 dark:text-surface-300">
+              Details & Advice for Other Travelers
             </label>
             <textarea
-              rows={3}
               value={formDescription}
               onChange={e => setFormDescription(e.target.value)}
-              placeholder="Describe what you observed so nearby travelers and guardians can take precautions..."
-              className="w-full rounded-xl border border-surface-300 dark:border-surface-700 bg-white dark:bg-surface-900 text-surface-900 dark:text-surface-100 text-xs p-3 focus:outline-hidden focus:ring-2 focus:ring-brand-500"
+              rows={3}
+              className="w-full rounded-lg text-xs bg-white dark:bg-surface-950 border border-surface-300 dark:border-surface-700 p-2.5 text-surface-900 dark:text-surface-100"
+              placeholder="Describe the condition, exact landmarks, or precautions..."
+              required
             />
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-surface-200 dark:border-surface-800">
+          <Switch
+            checked={isAnonymous}
+            onChange={setIsAnonymous}
+            label="Submit Anonymously"
+            description="Your name and account identity will not be attached to this report."
+          />
+
+          <div className="flex items-center justify-end gap-3 pt-2">
             <Button
-              type="button"
               variant="outline"
-              size="md"
+              size="sm"
+              type="button"
               onClick={() => setIsReportModalOpen(false)}
             >
               Cancel
             </Button>
-            <Button type="submit" variant="primary" size="md">
-              Publish Safety Report
+            <Button
+              variant="primary"
+              size="sm"
+              type="submit"
+              icon={<CheckCircle2 className="w-4 h-4" />}
+            >
+              Publish Report
             </Button>
           </div>
         </form>
